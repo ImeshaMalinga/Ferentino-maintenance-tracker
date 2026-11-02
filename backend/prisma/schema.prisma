@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum MaintenanceStatus {
+  PLAN
+  ACTUAL
+}
+
+enum ImportStatus {
+  PREVIEWED
+  IMPORTED
+  FAILED
+  REPLACED
+}
+
+model Machine {
+  id              String              @id @default(cuid())
+  machineCode     String?
+  serialNumber    String?
+  machineName     String
+  plant           String?
+  isActive        Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  maintenance     MaintenanceRecord[]
+  @@index([machineName])
+  @@index([machineCode])
+  @@index([serialNumber])
+}
+
+model ImportBatch {
+  id                    String              @id @default(cuid())
+  fileName              String
+  month                 Int
+  year                  Int
+  totalMachines         Int                 @default(0)
+  totalPlannedActivities Int                 @default(0)
+  totalActualActivities  Int                 @default(0)
+  importedAt            DateTime?
+  status                ImportStatus        @default(PREVIEWED)
+  maintenance           MaintenanceRecord[]
+  createdAt             DateTime            @default(now())
+  @@unique([month, year])
+}
+
+model MaintenanceRecord {
+  id              String            @id @default(cuid())
+  machineId       String
+  maintenanceType String
+  maintenanceStatus MaintenanceStatus
+  scheduledDate   DateTime
+  completionDate  DateTime?
+  completedBy     String?
+  actualStartTime DateTime?
+  actualEndTime   DateTime?
+  sourceMonth     Int
+  sourceYear      Int
+  importBatchId   String
+  machine         Machine           @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  importBatch     ImportBatch       @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  @@index([scheduledDate])
+  @@index([machineId, scheduledDate])
+  @@index([importBatchId])
+}
