@@ -11,29 +11,63 @@ export type ParsedActivity = {
   scheduledDate: string;
 };
 
-export type ParseWarning = { message: string; row?: number };
+export type ParseWarning = {
+  message: string;
+  row?: number;
+};
+
 export type ParseResult = {
   month: number;
   year: number;
   plant: string | null;
-  machines: Array<{ machineKey: string; machineCode: string | null; serialNumber: string | null; machineName: string; plant: string | null }>;
+  machines: Array<{
+    machineKey: string;
+    machineCode: string | null;
+    serialNumber: string | null;
+    machineName: string;
+    plant: string | null;
+  }>;
   activities: ParsedActivity[];
   warnings: ParseWarning[];
 };
 
 const clean = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
-const codes = (value: unknown) => clean(value).split(/[\s,;/]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
+const codes = (value: unknown) =>
+  clean(value)
+    .split(/[\s,;/]+/)
+    .map((x) => x.trim().toUpperCase())
+    .filter(Boolean);
 
 function cellText(value: ExcelJS.CellValue): string {
-  if (value && typeof value === 'object' && 'richText' in value) return value.richText.map((x) => x.text).join('');
-  if (value && typeof value === 'object' && 'text' in value) return value.text;
+  if (value && typeof value === 'object' && 'richText' in value) {
+    return value.richText.map((x) => x.text).join('');
+  }
+  if (value && typeof value === 'object' && 'text' in value) {
+    return value.text;
+  }
   return clean(value);
 }
 
 function parseMonthYear(value: string): { month: number; year: number } | null {
-  const match = value.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*[,/-]\s*(20\d{2})/i);
+  const match = value.match(
+    /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*[,/-]\s*(20\d{2})/i,
+  );
   if (!match) return null;
-  const month = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].findIndex((m) => match[0].toLowerCase().startsWith(m)) + 1;
+  const month =
+    [
+      'jan',
+      'feb',
+      'mar',
+      'apr',
+      'may',
+      'jun',
+      'jul',
+      'aug',
+      'sep',
+      'oct',
+      'nov',
+      'dec',
+    ].findIndex((m) => match[0].toLowerCase().startsWith(m)) + 1;
   return month > 0 ? { month, year: Number(match[1]) } : null;
 }
 
@@ -45,7 +79,13 @@ export async function parseWorkbook(buffer: Uint8Array): Promise<ParseResult> {
   const warnings: ParseWarning[] = [];
   const sheet = workbook.worksheets.find((candidate) => {
     let found = false;
-    candidate.eachRow((row) => row.eachCell((cell) => { if (cellText(cell.value).toLowerCase() === 'status') found = true; }));
+    candidate.eachRow((row) =>
+      row.eachCell((cell) => {
+        if (cellText(cell.value).toLowerCase() === 'status') {
+          found = true;
+        }
+      }),
+    );
     return found;
   });
   if (!sheet) throw new Error('No worksheet with a maintenance Status header was found.');
@@ -59,15 +99,25 @@ export async function parseWorkbook(buffer: Uint8Array): Promise<ParseResult> {
     const values = row.values as ExcelJS.CellValue[];
     values.forEach((value, index) => {
       const text = cellText(value);
-      if (text.toLowerCase() === 'status') { headerRow = rowNumber; statusColumn = index; }
+      if (text.toLowerCase() === 'status') {
+        headerRow = rowNumber;
+        statusColumn = index;
+      }
       if (/month\/year/i.test(text)) {
         const next = cellText(values[index + 1]);
         monthYear = parseMonthYear(next);
       }
-      if (/section/i.test(text)) plant = cellText(values[index + 1]) || null;
+      if (/section/i.test(text)) {
+        plant = cellText(values[index + 1]) || null;
+      }
     });
     if (headerRow === rowNumber) {
-      values.forEach((value, index) => { const day = Number(cellText(value)); if (day >= 1 && day <= 31) dayColumns.push({ column: index, day }); });
+      values.forEach((value, index) => {
+        const day = Number(cellText(value));
+        if (day >= 1 && day <= 31) {
+          dayColumns.push({ column: index, day });
+        }
+      });
     }
   });
   if (!headerRow || !statusColumn || dayColumns.length === 0) throw new Error('Could not identify the status and calendar-date columns.');
@@ -86,13 +136,27 @@ export async function parseWorkbook(buffer: Uint8Array): Promise<ParseResult> {
       machineName: clean(row.getCell(3).value),
       plant,
     };
-    if (!info.machineName) { warnings.push({ message: 'A maintenance row has no machine name.', row: rowNumber }); continue; }
+    if (!info.machineName) {
+      warnings.push({
+        message: 'A maintenance row has no machine name.',
+        row: rowNumber,
+      });
+      continue;
+    }
     const machineKey = `${info.machineCode ?? ''}|${info.serialNumber ?? ''}|${info.machineName.toLowerCase()}`;
     machines.set(machineKey, { machineKey, ...info });
     for (const { column, day } of dayColumns) {
       for (const maintenanceType of codes(row.getCell(column).value)) {
         if (!schedule) continue;
-        activities.push({ machineKey, ...info, maintenanceType, status: status as 'PLAN' | 'ACTUAL', scheduledDate: new Date(Date.UTC(schedule.year, schedule.month - 1, day)).toISOString() });
+        activities.push({
+          machineKey,
+          ...info,
+          maintenanceType,
+          status: status as 'PLAN' | 'ACTUAL',
+          scheduledDate: new Date(
+            Date.UTC(schedule.year, schedule.month - 1, day),
+          ).toISOString(),
+        });
       }
     }
   }
