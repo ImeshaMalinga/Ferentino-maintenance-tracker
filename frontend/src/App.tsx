@@ -989,7 +989,7 @@ function MachineDetails() {
                   ) : (
                     <div className="additional-maintenance-item">
                       <div>
-                        <div style={{ fontStyle: 'italic' , fontWeight: 'normal' }}>{existing.description}</div>
+                        <div style={{ fontWeight: 'bold' }}>{existing.description}</div>
                       </div>
                       <div className="additional-maintenance-actions">
                         <button
