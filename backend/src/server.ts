@@ -22,7 +22,14 @@ const upload = multer({
     cb(null, /\.(xlsx|xls)$/i.test(file.originalname));
   },
 });
-app.use(cors());
+
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://ferentino-maintenance-tracker-1.onrender.com"
+  ]
+}));
+
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
