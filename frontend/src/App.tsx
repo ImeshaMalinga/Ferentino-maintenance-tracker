@@ -9,13 +9,68 @@ import {
 import {
   CalendarDays,
   ClipboardList,
+  Download,
   Edit3,
   FileUp,
   LayoutDashboard,
   Menu,
+  Trash2,
   X,
 } from 'lucide-react';
-import { api, Activity, Machine, Summary } from './api';
+import {
+  AdditionalMaintenance,
+  api,
+  Activity,
+  Machine,
+  Summary,
+} from './api';
+
+const MECHANICAL_TYPES = ['MM', '3MM', '6MM', 'AM', 'WM'];
+const ELECTRICAL_TYPES = ['ME', '3ME', '6ME', 'AE'];
+const STATUS_COLORS = ['#25a244', '#f1c40f', '#e65618', '#1d4ed8'];
+
+function MaintenancePie({
+  title,
+  types,
+  counts,
+  colors,
+}: {
+  title: string;
+  types: string[];
+  counts: Record<string, number>;
+  colors: string[];
+}) {
+  const total = types.reduce((sum, type) => sum + (counts[type] ?? 0), 0);
+  let offset = 0;
+  const gradient = total
+    ? types.map((type, index) => {
+        const start = offset;
+        offset += ((counts[type] ?? 0) / total) * 100;
+        return `${colors[index]} ${start}% ${offset}%`;
+      }).join(', ')
+    : '#e5eaf0 0 100%';
+
+  return (
+    <div className="chart-card">
+      <h3>{title}</h3>
+      <div
+        className="pie-chart"
+        style={{ background: `conic-gradient(${gradient})` }}
+        role="img"
+        aria-label={`${title}: ${total} maintenance records`}
+      />
+      <div className="chart-legend">
+        {types.map((type, index) => (
+          <span key={type}>
+            <i style={{ background: colors[index] }} />
+            {type} <b>{counts[type] ?? 0}</b>
+          </span>
+        ))}
+      </div>
+      <strong className="chart-total">{total} records</strong>
+    </div>
+  );
+}
 
 const date = (value: string | null) =>
   value
@@ -81,37 +136,173 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 function Dashboard() {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const now = new Date();
+  const [month, setMonth] = useState(now.getUTCMonth() + 1);
+  const [year, setYear] = useState(now.getUTCFullYear());
+
   useEffect(() => {
     api
-      .get('/dashboard/summary')
+      .get('/dashboard/summary', { params: { month, year } })
       .then((response) => setSummary(response.data))
       .catch(console.error);
-  }, []);
+  }, [month, year]);
+
+  const changeMonth = (offset: number) => {
+    const next = new Date(Date.UTC(year, month - 1 + offset, 1));
+    setMonth(next.getUTCMonth() + 1);
+    setYear(next.getUTCFullYear());
+  };
+
+  const reportMonth = new Intl.DateTimeFormat(undefined, {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+
+  const escapeHtml = (value: unknown) =>
+    String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+
+  const formatReportDate = (value: string | null) =>
+    value ? date(value) : '—';
+
+  const loadReport = async () => {
+    const response = await api.get('/reports/monthly', {
+      params: { month, year },
+    });
+    return response.data;
+  };
+
+  const reportMarkup = (report: any) => {
+    const statuses = ['Done', 'Overdue', 'Not done', 'Scheduled maintenance'];
+    const chartRows = (['mechanical', 'electrical', 'all'] as const)
+      .map((discipline) => {
+        const counts = summary?.maintenanceStatusCounts[discipline];
+        return `<tr><th>${discipline[0].toUpperCase()}${discipline.slice(
+          1,
+        )}</th>${statuses
+          .map(
+            (status) =>
+              `<td>${escapeHtml(counts?.[status] ?? 0)}</td>`,
+          )
+          .join('')}</tr>`;
+      })
+      .join('');
+    const machineSections = report.machines
+      .map(
+        (machine: any) => `
+          <section class="machine">
+            <h2>${escapeHtml(machine.machineName)}</h2>
+            <p class="meta">${escapeHtml(machine.machineCode ?? 'No machine code')} ·
+              ${escapeHtml(machine.serialNumber ?? 'No serial number')}</p>
+            <h3>Maintenance</h3>
+            ${
+              machine.maintenance.length
+                ? `<table><thead><tr><th>Type</th><th>Status</th><th>Scheduled</th><th>Completion date</th><th>Completed by</th><th>Time</th></tr></thead><tbody>${machine.maintenance
+                    .map(
+                      (item: any) => `<tr>
+                        <td>${escapeHtml(item.maintenanceType)}</td>
+                        <td>${escapeHtml(item.maintenanceStatus === 'ACTUAL' ? 'Done' : 'Planned')}</td>
+                        <td>${escapeHtml(formatReportDate(item.scheduledDate))}</td>
+                        <td>${escapeHtml(formatReportDate(item.completionDate))}</td>
+                        <td>${escapeHtml(item.completedBy ?? '—')}</td>
+                        <td>${escapeHtml(
+                          item.actualStartTime || item.actualEndTime
+                            ? `${item.actualStartTime?.slice(11, 16) ?? '—'} - ${item.actualEndTime?.slice(11, 16) ?? '—'}`
+                            : '—',
+                        )}</td>
+                      </tr>`,
+                    )
+                    .join('')}</tbody></table>`
+                : '<p>No maintenance records.</p>'
+            }
+            <h3>Additional maintenance</h3>
+            ${
+              machine.additionalMaintenance.length
+                ? `<table><thead><tr><th>Discipline</th><th>Description</th><th>Status</th><th>Completed by</th><th>Completion date</th></tr></thead><tbody>${machine.additionalMaintenance
+                    .map(
+                      (item: any) => `<tr>
+                        <td>${escapeHtml(item.discipline)}</td>
+                        <td>${escapeHtml(item.description)}</td>
+                        <td>${item.isCompleted ? 'Done' : 'Open'}</td>
+                        <td>${escapeHtml(item.completedBy ?? '—')}</td>
+                        <td>${escapeHtml(formatReportDate(item.completionDate))}</td>
+                      </tr>`,
+                    )
+                    .join('')}</tbody></table>`
+                : '<p>No additional maintenance.</p>'
+            }
+          </section>`,
+      )
+      .join('');
+
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Maintenance report - ${escapeHtml(
+      reportMonth,
+    )}</title><style>
+      body{font-family:Arial,sans-serif;color:#172b42;margin:32px}
+      h1{margin-bottom:4px} h2{border-bottom:2px solid #dbe3eb;padding-bottom:6px}
+      h3{margin-bottom:6px;color:#426078}.meta{color:#607085}
+      table{border-collapse:collapse;width:100%;margin:8px 0 22px;font-size:12px}
+      th,td{border:1px solid #dbe3eb;padding:7px;text-align:left}
+      th{background:#f1f5f9}.machine{page-break-inside:avoid;margin-top:26px}
+      .summary td,.summary th{text-align:center}.summary th:first-child{text-align:left}
+      .note{color:#607085;font-size:12px}
+      @media print{body{margin:18px}.machine{page-break-inside:avoid}}
+    </style></head><body>
+      <h1>Maintenance report</h1><p class="meta">${escapeHtml(reportMonth)}</p>
+      <h2>Status summary</h2>
+      <table class="summary"><thead><tr><th>Discipline</th>${statuses
+        .map((status) => `<th>${status}</th>`)
+        .join('')}</tr></thead><tbody>${chartRows}</tbody></table>
+      <p class="note">Completion details include the user edits recorded for each maintenance item.</p>
+      ${machineSections || '<p>No machines found for this month.</p>'}
+    </body></html>`;
+  };
+
+  const downloadWordReport = async () => {
+    try {
+      const report = await loadReport();
+      const blob = new Blob([reportMarkup(report)], {
+        type: 'application/msword',
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `maintenance-report-${year}-${String(month).padStart(2, '0')}.doc`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const printPdfReport = async () => {
+    try {
+      const report = await loadReport();
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) return;
+      printWindow.document.write(reportMarkup(report));
+      printWindow.document.close();
+      printWindow.focus();
+      printWindow.print();
+    } catch (error) {
+      console.error(error);
+    }
+  };
  
   const cards = summary
     ? [
         ['Machines', summary.machines, 'navy'],
         ['Scheduled', summary.scheduled, 'blue'],
         ['Completed', summary.done, 'green'],
-        ['Overdue', summary.overdue, 'red'],
+        ['Overdue', summary.overdue, 'yellow'],
+        ['not Done', summary.notDone, 'red'],
       ]
     : [];
-  const total=summary
-    ? summary.scheduled + summary.done + summary.overdue
-    : 0;
-  
-  
-  const radius = 50;
-  const circumference = 2 * Math.PI * radius; // Approx 314.16
-
-  // 3. Define the slices array with your metrics
-  const slices = summary ? [
-    { label: "Scheduled", value: summary.scheduled, color: "blue" }, // Replace colors as needed
-    { label: "Completed", value: summary.done, color: "green" },
-    { label: "Overdue", value: summary.overdue, color: "red" },
-  ]: [];
-
-  let accumulatedLength = 0;
   
   return (
     <>
@@ -121,10 +312,6 @@ function Dashboard() {
           <h1>Good morning</h1>
           <p className="muted">Keep every machine ready for production.</p>
         </div>
-        <Link className="button" to="/import">
-          <FileUp size={17} />
-          Import Excel
-        </Link>
       </div>
       <section className="cards">
         {cards.map(([label, value, tone]) => (
@@ -137,46 +324,66 @@ function Dashboard() {
       <section className="panel">
         <div className="panel-title">
           <div>
-            <p className="eyebrow">Work status</p>
-            <h2>Scheduled, done and to do</h2>
+            <p className="eyebrow" style={{fontSize:20, fontWeight:'bolder'}}>Maintenance status</p>
           </div>
         </div>
         {summary ? (
-          <svg
-            viewBox="0 0 140 140"
-            width="140"
-            height="140"
-            style={{ transform: 'rotate(-90deg)' }}
-            display='flex'
-            justify-content= 'center'
-          >
-            {slices.map((slice) => {
-              const percentage = slice.value / total;
-              const strokeLength = percentage * circumference;
-
-              const strokeOffset = -accumulatedLength;
-
-              accumulatedLength += strokeLength;
-
-              return (
-                <circle
-                  key={slice.label}
-                  cx="70"
-                  cy="70"
-                  r={radius}
-                  fill="none"
-                  stroke={slice.color}
-                  strokeWidth="20"
-                  strokeDasharray={`${strokeLength} ${circumference}`}
-                  strokeDashoffset={strokeOffset}
-                />
-              );
-            })}
-          </svg>
+          <div className="chart-grid">
+            <MaintenancePie
+              title="Mechanical"
+              types={['Done', 'Overdue', 'Not done', 'Scheduled maintenance']}
+              counts={summary.maintenanceStatusCounts.mechanical}
+              colors={STATUS_COLORS}
+            />
+            <MaintenancePie
+              title="Electrical"
+              types={['Done', 'Overdue', 'Not done', 'Scheduled maintenance']}
+              counts={summary.maintenanceStatusCounts.electrical}
+              colors={STATUS_COLORS}
+            />
+            <MaintenancePie
+              title="All maintenance"
+              types={['Done', 'Overdue', 'Not done', 'Scheduled maintenance']}
+              counts={summary.maintenanceStatusCounts.all}
+              colors={STATUS_COLORS}
+            />
+          </div>
         ) : (
           <Empty text="Loading work status..." />
         )}
       </section>
+      <section className="panel report-panel">
+        <div className="panel-title" >
+          <div>
+            <p className="eyebrow">Reports</p>
+            <h2>Download maintenance report</h2>
+          </div>
+          <Download size={24} aria-hidden="true" />
+        </div>
+        <div className="report-actions">
+          <button className="button" type="button" onClick={() => void downloadWordReport()}>
+            Download Word
+          </button>
+          <button className="button secondary" type="button" onClick={() => void printPdfReport()}>
+            Print / Save PDF
+          </button>
+        </div>
+      </section>
+      <div className="month-picker dashboard-month-picker" aria-label="Dashboard month" style={{marginTop:20}}>
+        <button type="button" onClick={() => changeMonth(-1)} aria-label="Previous month">
+          ‹
+        </button>
+        <strong>
+          {new Intl.DateTimeFormat(undefined, {
+            month: 'long',
+            year: 'numeric',
+            timeZone: 'UTC',
+          }).format(new Date(Date.UTC(year, month - 1, 1)))}
+        </strong>
+        <button type="button" onClick={() => changeMonth(1)} aria-label="Next month">
+          ›
+        </button>
+      </div>
     </>
   );
 }
@@ -184,13 +391,22 @@ function Dashboard() {
 function Machines() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [search, setSearch] = useState('');
+  const now = new Date();
+  const [month, setMonth] = useState(now.getUTCMonth() + 1);
+  const [year, setYear] = useState(now.getUTCFullYear());
 
   useEffect(() => {
     api
-      .get('/machines', { params: { search } })
+      .get('/machines', { params: { search, month, year } })
       .then((response) => setMachines(response.data))
       .catch(console.error);
-  }, [search]);
+  }, [search, month, year]);
+
+  const changeMonth = (offset: number) => {
+    const next = new Date(Date.UTC(year, month - 1 + offset, 1));
+    setMonth(next.getUTCMonth() + 1);
+    setYear(next.getUTCFullYear());
+  };
 
   return (
     <>
@@ -199,6 +415,21 @@ function Machines() {
           <p className="eyebrow">Asset register</p>
           <h1>Machines</h1>
           <p className="muted">{machines.length} machines in your register</p>
+        </div>
+        <div className="month-picker" aria-label="Machine schedule month">
+          <button type="button" onClick={() => changeMonth(-1)} aria-label="Previous month">
+            ‹
+          </button>
+          <strong>
+            {new Intl.DateTimeFormat(undefined, {
+              month: 'long',
+              year: 'numeric',
+              timeZone: 'UTC',
+            }).format(new Date(Date.UTC(year, month - 1, 1)))}
+          </strong>
+          <button type="button" onClick={() => changeMonth(1)} aria-label="Next month">
+            ›
+          </button>
         </div>
       </div>
       <input
@@ -209,28 +440,36 @@ function Machines() {
       />
       <div className="machine-grid">
         {machines.map((machine) => (
-          <Link
-            className="machine-card"
-            to={`/machines/${machine.id}`}
-            key={machine.id}
-          >
-            <div className="machine-icon">⚙</div>
-            <div>
-              <h3>{machine.machineName}</h3>
-              <p>
-                {machine.machineCode ?? 'No machine code'} ·{' '}
-                {machine.serialNumber ?? 'No serial number'}
-              </p>
-            </div>
-            <div className="machine-meta">
-              <span>{machine.scheduledCount} scheduled</span>
-              <span>Next: {date(machine.nextDate)}</span>
-            </div>
-          </Link>
+          <MachineCard machine={machine} key={machine.id} />
         ))}
       </div>
       {!machines.length && <Empty text="No machines match your search." />}
     </>
+  );
+}
+
+function MachineCard({ machine }: { machine: Machine }) {
+  const [discipline, setDiscipline] = useState<'Mechanical' | 'Electrical'>(
+    'Mechanical',
+  );
+  const isMechanical = discipline === 'Mechanical';
+  const types = isMechanical ? MECHANICAL_TYPES : ELECTRICAL_TYPES;
+  const count = isMechanical ? machine.mechanicalCount : machine.electricalCount;
+  const hasRecords = types.some(
+    (type) => (machine.maintenanceTypeCounts[type] ?? 0) > 0,
+  );
+
+  return (
+    <Link className="machine-card" to={`/machines/${machine.id}`}>
+      <div className="machine-icon">⚙</div>
+      <div>
+        <h3>{machine.machineName}</h3>
+        <p>
+          {machine.machineCode ?? 'No machine code'} ·{' '}
+          {machine.serialNumber ?? 'No serial number'}
+        </p>
+      </div>
+    </Link>
   );
 }
 
@@ -303,15 +542,33 @@ function Calendar() {
               key={key}
             >
               <b>{i + 1}</b>
-              {items.slice(0, 3).map((item) => (
+              {items.slice(0, 50).map((item) => (
                 <span
-                  className={item.maintenanceStatus.toLowerCase()}
+                  className={(() => {
+                    if (item.maintenanceStatus === 'ACTUAL') return 'actual';
+                    const currentMonth = new Date();
+                    const recordMonth = new Date(item.scheduledDate);
+                    const recordMonthKey =
+                      recordMonth.getUTCFullYear() * 12 + recordMonth.getUTCMonth();
+                    const currentMonthKey =
+                      currentMonth.getUTCFullYear() * 12 + currentMonth.getUTCMonth();
+                    if (recordMonthKey < currentMonthKey) return 'not-done';
+                    const today = new Date(
+                      Date.UTC(
+                        currentMonth.getUTCFullYear(),
+                        currentMonth.getUTCMonth(),
+                        currentMonth.getUTCDate(),
+                      ),
+                    );
+                    if (new Date(item.scheduledDate) < today) return 'overdue';
+                    return 'plan';
+                  })()}
                   key={item.id}
                 >
                   {item.maintenanceType}
                 </span>
               ))}
-              {items.length > 3 && <small>+{items.length - 3} more</small>}
+              {items.length > 50 && <small>+{items.length - 50} more</small>}
             </div>
           );
         })}
@@ -428,6 +685,16 @@ function MachineDetails() {
   const { id } = useParams();
   const [machine, setMachine] = useState<Machine | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [additionalMaintenance, setAdditionalMaintenance] = useState<
+    AdditionalMaintenance[]
+  >([]);
+  const [discipline, setDiscipline] = useState<'Mechanical' | 'Electrical'>(
+    'Mechanical',
+  );
+  const [additionalDiscipline, setAdditionalDiscipline] =
+    useState<AdditionalMaintenance['discipline']>('MECHANICAL');
+  const [editingAdditional, setEditingAdditional] =
+    useState<AdditionalMaintenance | null>(null);
   const [editing, setEditing] = useState<Activity | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const [message, setMessage] = useState('');
@@ -435,10 +702,7 @@ function MachineDetails() {
   useEffect(() => {
     if (!id) return;
 
-    Promise.all([
-      api.get('/machines'),
-      api.get(`/machines/${id}/maintenance`),
-    ])
+    Promise.all([api.get('/machines'), api.get(`/machines/${id}`)])
       .then(([machines, records]) => {
         setMachine(
           machines.data.find((item: Machine) => item.id === id) ?? null,
@@ -446,6 +710,13 @@ function MachineDetails() {
         setActivities(records.data);
       })
       .catch(console.error);
+
+    api
+      .get(`/machines/${id}/additional-maintenance`)
+      .then((response) => setAdditionalMaintenance(response.data))
+      .catch(() => {
+        setMessage('Additional maintenance could not be loaded.');
+      });
   }, [id]);
 
   const save = async (item: Activity, form: FormData) => {
@@ -478,6 +749,81 @@ function MachineDetails() {
     }
   };
 
+  const maintenanceTypes =
+    discipline === 'Mechanical' ? MECHANICAL_TYPES : ELECTRICAL_TYPES;
+  const visibleActivities = activities.filter((item) =>
+    maintenanceTypes.includes(item.maintenanceType),
+  );
+
+  const addAdditionalMaintenance = async (
+    event: React.FormEvent<HTMLFormElement>,
+    additionalDiscipline: AdditionalMaintenance['discipline'],
+  ) => {
+    event.preventDefault();
+    if (!id) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(event.currentTarget);
+    const description = String(form.get('description') ?? '').trim();
+    if (!description) return;
+
+    try {
+      const response = await api.post(`/machines/${id}/additional-maintenance`, {
+        discipline: additionalDiscipline,
+        description,
+        isCompleted: form.get('isCompleted') === 'on',
+      });
+      setAdditionalMaintenance((current) => [...current, response.data]);
+      formElement.reset();
+      setMessage('Additional maintenance added.');
+    } catch (error: any) {
+      setMessage(
+        error.response?.data?.error ??
+          'Could not add additional maintenance.',
+      );
+    }
+  };
+
+  const saveAdditionalMaintenance = async (
+    event: React.FormEvent<HTMLFormElement>,
+    item: AdditionalMaintenance,
+  ) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const description = String(form.get('description') ?? '').trim();
+    if (!description) return;
+
+    try {
+      const response = await api.patch(`/additional-maintenance/${item.id}`, {
+        description,
+        isCompleted: form.get('isCompleted') === 'on',
+      });
+      setAdditionalMaintenance((current) =>
+        current.map((record) => (record.id === item.id ? response.data : record)),
+      );
+      setEditingAdditional(null);
+      setMessage('Additional maintenance updated.');
+    } catch (error: any) {
+      setMessage(
+        error.response?.data?.error ?? 'Could not update additional maintenance.',
+      );
+    }
+  };
+
+  const removeAdditionalMaintenance = async (item: AdditionalMaintenance) => {
+    if (!window.confirm('Remove this additional maintenance item?')) return;
+    try {
+      await api.delete(`/additional-maintenance/${item.id}`);
+      setAdditionalMaintenance((current) =>
+        current.filter((record) => record.id !== item.id),
+      );
+      setMessage('Additional maintenance removed.');
+    } catch (error: any) {
+      setMessage(
+        error.response?.data?.error ?? 'Could not remove additional maintenance.',
+      );
+    }
+  };
+
   return (
     <>
       <div className="page-heading">
@@ -496,12 +842,32 @@ function MachineDetails() {
       {message && <p className="message">{message}</p>}
       <section className="panel">
         <div className="panel-title">
-          <h2>Maintenance timeline</h2>
-          <span className="muted">{activities.length} records</span>
+          <div>
+            <h2>{discipline} maintenance details</h2>
+            <span className="muted">
+              {visibleActivities.length} records
+            </span>
+          </div>
+          <div
+            className="discipline-toggle"
+            role="group"
+            aria-label="Maintenance discipline"
+          >
+            {(['Mechanical', 'Electrical'] as const).map((value) => (
+              <button
+                className={discipline === value ? 'selected' : ''}
+                key={value}
+                type="button"
+                onClick={() => setDiscipline(value)}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
         </div>
-        {activities.length ? (
+        {visibleActivities.length ? (
           <div className="activity-list">
-            {activities.map((item) => (
+            {visibleActivities.map((item) => (
               <div className="maintenance-editor" key={item.id}>
                 <div className="activity">
                   <span
@@ -555,8 +921,119 @@ function MachineDetails() {
             ))}
           </div>
         ) : (
-          <Empty text="No maintenance history is available for this machine." />
+          <Empty
+            text={`No ${discipline.toLowerCase()} maintenance history is available for this machine.`}
+          />
         )}
+      </section>
+      <section className="panel">
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">Additional maintenance</p>
+          </div>
+        </div>
+        <div className="additional-maintenance-section">
+          <div className="panel-title">
+            <div
+              className="discipline-toggle"
+              role="group"
+              aria-label="Additional maintenance discipline"
+            >
+              {(['MECHANICAL', 'ELECTRICAL'] as const).map((value) => (
+                <button
+                  className={additionalDiscipline === value ? 'selected' : ''}
+                  key={value}
+                  type="button"
+                  onClick={() => setAdditionalDiscipline(value)}
+                >
+                  {value === 'MECHANICAL' ? 'Mechanical' : 'Electrical'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {(() => {
+            const existing = additionalMaintenance.find(
+              (item) => item.discipline === additionalDiscipline,
+            );
+            const title =
+              additionalDiscipline === 'MECHANICAL' ? 'mechanical' : 'electrical';
+            return (
+              <>
+                {existing ? (
+                  editingAdditional?.id === existing.id ? (
+                    <form
+                      className="additional-maintenance-form"
+                      onSubmit={(event) =>
+                        void saveAdditionalMaintenance(event, existing)
+                      }
+                    >
+                      <input
+                        name="description"
+                        type="text"
+                        defaultValue={existing.description}
+                        maxLength={500}
+                        aria-label={`${title} additional maintenance description`}
+                        required
+                      />
+                      <button className="button" type="submit">
+                        Save
+                      </button>
+                      <button
+                        className="button secondary"
+                        type="button"
+                        onClick={() => setEditingAdditional(null)}
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="additional-maintenance-item">
+                      <div>
+                        <div style={{ fontStyle: 'italic' , fontWeight: 'normal' }}>{existing.description}</div>
+                      </div>
+                      <div className="additional-maintenance-actions">
+                        <button
+                          className="icon-button"
+                          type="button"
+                          onClick={() => setEditingAdditional(existing)}
+                        >
+                          <Edit3 size={17}/>
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          onClick={() => void removeAdditionalMaintenance(existing)}
+                        >
+                          <Trash2 size={17} color='#e85454'/>
+                        </button>
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  <form
+                    className="additional-maintenance-form"
+                    onSubmit={(event) =>
+                      void addAdditionalMaintenance(event, additionalDiscipline)
+                    }
+                  >
+                    <input
+                      name="description"
+                      type="text"
+                      placeholder={`Describe ${title} additional maintenance`}
+                      aria-label={`${title} additional maintenance description`}
+                      maxLength={1000}
+                      style={{ height: '50px',borderRadius: '10px', padding: '10px', fontSize: '14px',border: '3px solid #ccc',outline: 'none'}}
+                      required
+                    />
+                    <button className="button" type="submit">
+                      Add
+                    </button>
+                  </form>
+                )}
+              </>
+            );
+          })()}
+        </div>
       </section>
       {editing && (
         <div

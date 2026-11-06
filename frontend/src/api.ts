@@ -13,6 +13,13 @@ export type Summary = {
   upcoming: number;
   completed: number;
   overdue: number;
+  notDone: number;
+  maintenanceTypeCounts: Record<string, number>;
+  maintenanceStatusCounts: {
+    mechanical: Record<string, number>;
+    electrical: Record<string, number>;
+    all: Record<string, number>;
+  };
 };
 
 export type Machine = {
@@ -22,6 +29,9 @@ export type Machine = {
   serialNumber: string | null;
   scheduledCount: number;
   nextDate: string | null;
+  maintenanceTypeCounts: Record<string, number>;
+  mechanicalCount: number;
+  electricalCount: number;
 };
 
 export type Activity = {
@@ -35,4 +45,17 @@ export type Activity = {
   actualStartTime: string | null;
   actualEndTime: string | null;
   machine?: Machine;
+};
+
+export type AdditionalMaintenance = {
+  id: string;
+  machineId: string;
+  discipline: 'MECHANICAL' | 'ELECTRICAL';
+  description: string;
+  isCompleted: boolean;
+  completionDate: string | null;
+  completedBy: string | null;
+  actualStartTime: string | null;
+  actualEndTime: string | null;
+  createdAt: string;
 };

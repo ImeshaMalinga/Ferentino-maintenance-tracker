@@ -19,6 +19,11 @@ enum ImportStatus {
   REPLACED
 }
 
+enum MaintenanceDiscipline {
+  MECHANICAL
+  ELECTRICAL
+}
+
 model Machine {
   id              String              @id @default(cuid())
   machineCode     String?
@@ -29,9 +34,28 @@ model Machine {
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
   maintenance     MaintenanceRecord[]
+  additionalMaintenance AdditionalMaintenance[]
   @@index([machineName])
   @@index([machineCode])
   @@index([serialNumber])
+}
+
+model AdditionalMaintenance {
+  id              String              @id @default(cuid())
+  machineId       String
+  discipline      MaintenanceDiscipline
+  scheduledDate   DateTime?
+  description     String
+  isCompleted     Boolean             @default(false)
+  completionDate  DateTime?
+  completedBy     String?
+  actualStartTime DateTime?
+  actualEndTime   DateTime?
+  machine         Machine             @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  @@index([machineId, discipline])
+  @@unique([machineId, discipline])
 }
 
 model ImportBatch {
