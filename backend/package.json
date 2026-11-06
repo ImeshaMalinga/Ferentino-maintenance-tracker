@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "start": "node dist/server.js"
   },
   "dependencies": {
     "@prisma/client": "^6.0.0",
